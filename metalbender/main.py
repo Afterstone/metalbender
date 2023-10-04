@@ -1,13 +1,19 @@
 import asyncio
 import datetime as dt
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, status
+from fastapi.responses import Response
+from google.api_core import exceptions as gcp_exceptions
 from google.cloud import compute
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 import metalbender.config as config
 from metalbender.data_access import SessionType, get_session, models
+from metalbender.data_access.gce import find_or_create_gce_instance
+from metalbender.data_access.heartbeat import (calculate_deadline_time,
+                                               create_heartbeat)
+from metalbender.gce_tools import start_gce_instance
 
 app = FastAPI()
 
@@ -30,56 +36,50 @@ async def keep_alive(
     request: KeepAliveRequest,
     db_session: SessionType = Depends(get_session),
 ):
-    deadline_time: dt.datetime
-    deadline_time = dt.datetime.utcnow() + dt.timedelta(seconds=request.deadline_seconds)
+    try:
+        db_session.begin()
 
-    # Check if the GceInstance exists.
-    instance = (
-        db_session.query(models.GceInstance)
-        .filter(
-            models.GceInstance.project_id == request.instance_project_id,
-            models.GceInstance.zone == request.instance_zone,
-            models.GceInstance.name == request.instance_name,
+        # Check if the GceInstance exists.
+        instance = await run_in_threadpool(
+            find_or_create_gce_instance,
+            db_session=db_session,
+            instance_project_id=request.instance_project_id,
+            instance_zone=request.instance_zone,
+            instance_name=request.instance_name,
         )
-        .first()
-    )
-    if instance is None:
-        instance = models.GceInstance(
-            project_id=request.instance_project_id,
-            zone=request.instance_zone,
-            name=request.instance_name,
+
+        deadline_time = calculate_deadline_time(
+            start_time=dt.datetime.utcnow(),
+            seconds_to_deadline=request.deadline_seconds,
         )
-        db_session.add(instance)
-        db_session.flush()
-
-    heartbeat = models.Heartbeat(
-        instance_id=instance.id,
-        added=dt.datetime.utcnow(),
-        deadline=deadline_time,
-    )
-
-    db_session.add(heartbeat)
-    db_session.commit()
-
-    comp_client = compute.InstancesClient()
-
-    # Check if the instance is running.
-    instance = await run_in_threadpool(
-        comp_client.get,
-        project=request.instance_project_id,
-        zone=request.instance_zone,
-        instance=request.instance_name,
-    )
-
-    if instance.status != 'RUNNING':
         await run_in_threadpool(
-            comp_client.start,
-            project=request.instance_project_id,
-            zone=request.instance_zone,
-            instance=request.instance_name,
+            create_heartbeat,
+            db_session=db_session,
+            instance_id=instance.id,  # type: ignore
+            deadline_time=deadline_time,
         )
 
-    return {'status': 'ok'}
+        comp_client = compute.InstancesClient()
+
+        await run_in_threadpool(
+            start_gce_instance,
+            comp_client=comp_client,
+            instance_project_id=request.instance_project_id,
+            instance_zone=request.instance_zone,
+            instance_name=request.instance_name,
+        )
+
+        response = Response(status_code=status.HTTP_200_OK)
+    except gcp_exceptions.Forbidden:
+        db_session.rollback()
+        message = {'status': 'error', 'message': "You don't have permission to access this GCP resource."}
+        response = Response(status_code=status.HTTP_403_FORBIDDEN, content=message)
+    except Exception:
+        db_session.rollback()
+        message = {'status': 'error', 'message': "Unspecified error."}
+        response = Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=message)
+
+    return response
 
 
 @app.post('/stop')
