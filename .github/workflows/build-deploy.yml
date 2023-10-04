@@ -65,7 +65,7 @@ jobs:
         run: |
           gcloud run deploy ${{ vars.cloud_run_service }} \
             --region ${{ vars.gcp_region }} \
-            --image ${{ vars.ARTIFACT_REPO }} \
+            --image ${{ env.ARTIFACT_REPO }} \
             --platform "managed" \
             --allow-unauthenticated \
             --quiet
