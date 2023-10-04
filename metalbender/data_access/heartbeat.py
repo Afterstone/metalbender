@@ -1,7 +1,7 @@
 import datetime as dt
 
 from metalbender.data_access import SessionType
-from metalbender.data_access.models import Heartbeat
+from metalbender.data_access.models import GceInstance, Heartbeat
 
 
 def calculate_deadline_time(start_time: dt.datetime, seconds_to_deadline: int) -> dt.datetime:
@@ -27,3 +27,15 @@ def create_heartbeat(
 def remove_heartbeats(db_session: SessionType):
     db_session.query(Heartbeat).filter(Heartbeat.deadline < dt.datetime.utcnow()).delete()
     db_session.commit()
+
+
+def get_valid_heartbeats(
+    db_session: SessionType,
+    current_time_utc: dt.datetime,
+) -> list[Heartbeat]:
+    return (
+        db_session.query(Heartbeat)
+        .join(GceInstance, onclause=Heartbeat.instance_id == GceInstance.id)
+        .filter(Heartbeat.deadline > current_time_utc)
+        .all()
+    )

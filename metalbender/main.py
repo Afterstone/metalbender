@@ -9,10 +9,11 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 import metalbender.config as config
-from metalbender.data_access import SessionType, get_session, models
+from metalbender.data_access import SessionType, get_session
 from metalbender.data_access.gce import find_or_create_gce_instance
 from metalbender.data_access.heartbeat import (calculate_deadline_time,
                                                create_heartbeat,
+                                               get_valid_heartbeats,
                                                remove_heartbeats)
 from metalbender.gce_tools import start_gce_instance
 
@@ -85,51 +86,55 @@ async def keep_alive(
 
 @app.post('/stop')
 async def stop_instance(db_session: SessionType = Depends(get_session)):
-    project = config.get_gcp_project_id()
-    comp_client = compute.InstancesClient()
-    agg_list = await run_in_threadpool(comp_client.aggregated_list, project=project)
-    instance_lists = [
-        x[1].instances
-        for x in agg_list
-        if x[1].warning.code != 'NO_RESULTS_ON_PAGE'
-    ]
-    instances = [x for y in instance_lists for x in y if x.status == 'RUNNING']
+    try:
+        project = config.get_gcp_project_id()
+        comp_client = compute.InstancesClient()
+        agg_list = await run_in_threadpool(comp_client.aggregated_list, project=project)
+        instance_lists = [
+            x[1].instances
+            for x in agg_list
+            if x[1].warning.code != 'NO_RESULTS_ON_PAGE'
+        ]
+        instances = [x for y in instance_lists for x in y if x.status == 'RUNNING']
 
-    # Check if the instance has a heartbeat.
-    current_time_utc = dt.datetime.utcnow()
+        # Check if the instance has a heartbeat.
+        current_time_utc = dt.datetime.utcnow()
 
-    def get_valid_heartbeats() -> list[models.Heartbeat]:
-        return (
-            db_session.query(models.Heartbeat)
-            .join(models.GceInstance, onclause=models.Heartbeat.instance_id == models.GceInstance.id)
-            .filter(models.Heartbeat.deadline > current_time_utc)
-            .all()
-        )
-    heartbeats = await run_in_threadpool(get_valid_heartbeats)
-
-    # Remove instances that have a valid heartbeat.
-    instances = [
-        x for x in instances
-        if not any(
-            y.gce_instance.name == x.name
-            and y.gce_instance.zone == x.zone.split('/')[-1]
-            and y.gce_instance.project_id == project
-            for y in heartbeats
-        )
-    ]
-
-    async def stop_instance(instance):
-        await run_in_threadpool(
-            comp_client.stop,
-            project=project,
-            zone=instance.zone.split('/')[-1],
-            instance=instance.name,
+        heartbeats = await run_in_threadpool(
+            get_valid_heartbeats,
+            db_session=db_session,
+            current_time_utc=current_time_utc,
         )
 
-    futures = [stop_instance(instance) for instance in instances]
-    await asyncio.gather(*futures)
+        # Remove instances that have a valid heartbeat.
+        instances = [
+            x for x in instances
+            if not any(
+                y.gce_instance.name == x.name
+                and y.gce_instance.zone == x.zone.split('/')[-1]
+                and y.gce_instance.project_id == project
+                for y in heartbeats
+            )
+        ]
 
-    return {'status': 'ok'}
+        futures = [
+            run_in_threadpool(
+                comp_client.stop,
+                project=project,
+                zone=instance.zone.split('/')[-1],
+                instance=instance.name,
+            )
+            for instance in instances
+        ]
+        await asyncio.gather(*futures)
+
+        response = Response(status_code=status.HTTP_200_OK)
+    except Exception:
+        db_session.rollback()
+        message = {'status': 'error', 'message': "Unspecified error."}
+        response = Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=message)
+
+    return response
 
 
 @app.post('/clean/heartbeats')
