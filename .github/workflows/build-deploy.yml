@@ -1,0 +1,77 @@
+# Workflow copied from myself, from an earlier project:
+# https://github.com/Afterstone/nettopp-auth-api/tree/develop/.github/workflows
+
+name: Build and deploy to Cloud Run
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "The environment to deploy to, either dev or prod"
+        required: true
+        type: string
+
+jobs:
+  build_and_deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+
+    environment: ${{inputs.environment}}
+
+    permissions:
+      contents: "read"
+      id-token: "write"
+
+    steps:
+      - name: Set up GAR base URL
+        run: echo "ARTIFACT_BASE_URL=${{env.gcp_region}}-docker.pkg.dev" >> $GITHUB_ENV
+
+      - name: Set the GAR repo URL
+        run: echo "ARTIFACT_REPO=${{env.ARTIFACT_BASE_URL}}/${{env.gcp_project_id}}/${{env.gar_repo_name}}/${{env.cloud_run_service}}:${{ github.sha }}" >> $GITHUB_ENV
+
+      - name: Checkout
+        uses: actions/checkout@v4.1.0
+
+      - id: "auth"
+        uses: "google-github-actions/auth@v1.1.1"
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+          token_format: "access_token"
+
+      - name: Docker Auth
+        id: docker-auth
+        uses: "docker/login-action@v3.0.0"
+        with:
+          username: "oauth2accesstoken"
+          password: "${{ steps.auth.outputs.access_token }}"
+          registry: "${{ env.gcp_region }}-docker.pkg.dev"
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1.1.1
+
+      - name: Authorize docker push
+        run: gcloud auth configure-docker ${{ env.gcp_region }}-docker.pkg.dev --quiet
+
+      - name: Build container
+        run: |
+          docker build \
+            -t ${{ env.ARTIFACT_REPO }} \
+            -f Dockerfile .
+
+      - name: Push container
+        run: docker push ${{ env.ARTIFACT_REPO }}
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.cloud_run_service }} \
+            --region ${{ env.gcp_region }} \
+            --image ${{ env.ARTIFACT_REPO }} \
+            --platform "managed" \
+            --allow-unauthenticated \
+            --quiet
+
+      - name: Update traffic
+        run: |
+          gcloud run services update-traffic ${{ env.cloud_run_service }} \
+            --region ${{ env.gcp_region }} \
+            --to-revisions=LATEST=100
