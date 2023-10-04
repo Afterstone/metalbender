@@ -86,7 +86,7 @@ async def keep_alive(
             instance_name=request.instance_name,
         )
 
-        api_response = ApiResponse(status=Status.ok, message="Instance is alive.")
+        api_response = ApiResponse(status=Status.ok, message="Keep-alive request added.")
         response = Response(status_code=status.HTTP_200_OK, content=api_response.model_dump_json())
     except gcp_exceptions.Forbidden:
         db_session.rollback()
@@ -136,6 +136,7 @@ async def stop_instance(db_session: SessionType = Depends(get_session)):
         ]
         await asyncio.gather(*futures)
 
+        api_response = ApiResponse(status=Status.ok, message=f"{len(instances)} instances stopped.")
         response = Response(status_code=status.HTTP_200_OK)
     except Exception:
         db_session.rollback()
