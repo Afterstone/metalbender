@@ -103,6 +103,14 @@ def get_fastapi_port() -> int:
     return int(_get_envvar_str("FASTAPI_PORT"))
 
 
+def get_fastapi_username() -> str:
+    return _get_envvar_str("FASTAPI_USERNAME")
+
+
+def get_fastapi_password() -> str:
+    return _get_envvar_str("FASTAPI_PASSWORD")
+
+
 def get_sql_client_key_path() -> Path:
     return _get_secret_manager_file(
         _get_envvar_str("SQL_CLIENT_KEY_SECRETS_MANAGER_NAME"),

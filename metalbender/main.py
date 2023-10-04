@@ -2,8 +2,9 @@ import asyncio
 import datetime as dt
 from enum import Enum
 
-from fastapi import Depends, FastAPI, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import Response
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from google.api_core import exceptions as gcp_exceptions
 from google.cloud import compute
 from pydantic import BaseModel
@@ -20,6 +21,7 @@ from metalbender.gce_tools import (get_running_gce_instances,
                                    start_gce_instance, stop_gce_instance)
 
 app = FastAPI()
+security = HTTPBasic()
 
 
 class Status(str, Enum):
@@ -31,6 +33,24 @@ class Status(str, Enum):
 class ApiResponse(BaseModel):
     status: Status
     message: str
+
+
+class SimpleUser(BaseModel):
+    username: str
+    password: str
+
+
+def get_user_credentials(credentials: HTTPBasicCredentials = Depends(security)) -> SimpleUser:
+    correct_username = config.get_fastapi_username()
+    correct_password = config.get_fastapi_password()
+    if credentials.username != correct_username or credentials.password != correct_password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    return SimpleUser(username=credentials.username, password=credentials.password)
 
 
 @app.get('/health')
@@ -50,6 +70,7 @@ class KeepAliveRequest(BaseModel):
 async def keep_alive(
     request: KeepAliveRequest,
     db_session: SessionType = Depends(get_session),
+    _: str = Depends(get_user_credentials),
 ):
     response: Response
     api_response: ApiResponse
@@ -101,7 +122,10 @@ async def keep_alive(
 
 
 @app.post('/stop')
-async def stop_instance(db_session: SessionType = Depends(get_session)):
+async def stop_instance(
+    db_session: SessionType = Depends(get_session),
+    _: str = Depends(get_user_credentials),
+):
     response: Response
     api_response: ApiResponse
     try:
@@ -147,7 +171,10 @@ async def stop_instance(db_session: SessionType = Depends(get_session)):
 
 
 @app.post('/clean/heartbeats')
-async def clean_heartbeats(db_session: SessionType = Depends(get_session)) -> Response:
+async def clean_heartbeats(
+    db_session: SessionType = Depends(get_session),
+    _: str = Depends(get_user_credentials),
+) -> Response:
     response: Response
     api_response: ApiResponse
 
