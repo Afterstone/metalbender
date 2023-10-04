@@ -139,7 +139,6 @@ async def stop_instance(db_session: SessionType = Depends(get_session)):
         response = Response(status_code=status.HTTP_200_OK)
     except Exception:
         db_session.rollback()
-        # message = {'status': 'error', 'message': "Unspecified error."}
         api_response = ApiResponse(status=Status.error, message="Unspecified error.")
         response = Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=api_response.model_dump_json())
 
