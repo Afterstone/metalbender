@@ -24,6 +24,10 @@ app = FastAPI()
 security = HTTPBasic()
 
 
+class RequestError(Exception):
+    pass
+
+
 class Status(str, Enum):
     ok = "ok"
     error = "error"
@@ -35,12 +39,12 @@ class ApiResponse(BaseModel):
     message: str
 
 
-class SimpleUser(BaseModel):
+class BasicUser(BaseModel):
     username: str
     password: str
 
 
-def get_user_credentials(credentials: HTTPBasicCredentials = Depends(security)) -> SimpleUser:
+def get_user_credentials(credentials: HTTPBasicCredentials = Depends(security)) -> BasicUser:
     correct_username = config.get_fastapi_username()
     correct_password = config.get_fastapi_password()
     if credentials.username != correct_username or credentials.password != correct_password:
@@ -50,7 +54,7 @@ def get_user_credentials(credentials: HTTPBasicCredentials = Depends(security)) 
             headers={"WWW-Authenticate": "Basic"},
         )
 
-    return SimpleUser(username=credentials.username, password=credentials.password)
+    return BasicUser(username=credentials.username, password=credentials.password)
 
 
 @app.get('/health')
@@ -80,6 +84,9 @@ async def keep_alive(
     response: Response
     api_response: ApiResponse
     try:
+        if request.deadline_seconds < 10:
+            raise RequestError("Deadline must be at least 10 seconds to ensure start/stop doesn't overlap.")
+
         db_session.begin()
 
         # Check if the GceInstance exists.
@@ -118,6 +125,10 @@ async def keep_alive(
         db_session.rollback()
         api_response = ApiResponse(status=Status.error, message="You don't have permission to access this GCP resource.")
         response = Response(status_code=status.HTTP_403_FORBIDDEN, content=api_response.model_dump_json())
+    except RequestError as e:
+        db_session.rollback()
+        api_response = ApiResponse(status=Status.error, message=str(e))
+        response = Response(status_code=status.HTTP_400_BAD_REQUEST, content=api_response.model_dump_json())
     except Exception:
         db_session.rollback()
         api_response = ApiResponse(status=Status.error, message="Unspecified error.")
