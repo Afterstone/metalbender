@@ -1,5 +1,6 @@
 import asyncio
 import datetime as dt
+from enum import Enum
 
 from fastapi import Depends, FastAPI, status
 from fastapi.responses import Response
@@ -20,6 +21,17 @@ from metalbender.gce_tools import start_gce_instance
 app = FastAPI()
 
 
+class Status(str, Enum):
+    ok = "ok"
+    error = "error"
+    warning = "warning"
+
+
+class ApiResponse(BaseModel):
+    status: Status
+    message: str
+
+
 @app.get('/health')
 async def health():
     return {'status': 'ok'}
@@ -38,6 +50,8 @@ async def keep_alive(
     request: KeepAliveRequest,
     db_session: SessionType = Depends(get_session),
 ):
+    response: Response
+    api_response: ApiResponse
     try:
         db_session.begin()
 
@@ -71,22 +85,27 @@ async def keep_alive(
             instance_name=request.instance_name,
         )
 
-        response = Response(status_code=status.HTTP_200_OK)
+        api_response = ApiResponse(status=Status.ok, message="Instance is alive.")
+        response = Response(status_code=status.HTTP_200_OK, content=api_response.model_dump_json())
     except gcp_exceptions.Forbidden:
         db_session.rollback()
-        message = {'status': 'error', 'message': "You don't have permission to access this GCP resource."}
-        response = Response(status_code=status.HTTP_403_FORBIDDEN, content=message)
+        api_response = ApiResponse(status=Status.error, message="You don't have permission to access this GCP resource.")
+        response = Response(status_code=status.HTTP_403_FORBIDDEN, content=api_response.model_dump_json())
     except Exception:
         db_session.rollback()
-        message = {'status': 'error', 'message': "Unspecified error."}
-        response = Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=message)
+        api_response = ApiResponse(status=Status.error, message="Unspecified error.")
+        response = Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=api_response.model_dump_json())
 
     return response
 
 
 @app.post('/stop')
 async def stop_instance(db_session: SessionType = Depends(get_session)):
+    response: Response
+    api_response: ApiResponse
     try:
+        db_session.begin()
+
         project = config.get_gcp_project_id()
         comp_client = compute.InstancesClient()
         agg_list = await run_in_threadpool(comp_client.aggregated_list, project=project)
@@ -131,21 +150,29 @@ async def stop_instance(db_session: SessionType = Depends(get_session)):
         response = Response(status_code=status.HTTP_200_OK)
     except Exception:
         db_session.rollback()
-        message = {'status': 'error', 'message': "Unspecified error."}
-        response = Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=message)
+        # message = {'status': 'error', 'message': "Unspecified error."}
+        api_response = ApiResponse(status=Status.error, message="Unspecified error.")
+        response = Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=api_response.model_dump_json())
 
     return response
 
 
 @app.post('/clean/heartbeats')
-async def clean_heartbeats(db_session: SessionType = Depends(get_session)):
+async def clean_heartbeats(db_session: SessionType = Depends(get_session)) -> Response:
+    response: Response
+    api_response: ApiResponse
+
     try:
+        db_session.begin()
         await run_in_threadpool(remove_heartbeats, db_session=db_session)
-        response = Response(status_code=status.HTTP_200_OK)
+
+        api_response = ApiResponse(status=Status.ok, message="Heartbeats cleaned.")
+        response = Response(status_code=status.HTTP_200_OK, content=api_response.model_dump_json())
     except Exception:
         db_session.rollback()
-        message = {'status': 'error', 'message': "Unspecified error."}
-        response = Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=message)
+        # message = {'status': 'error', 'message': "Unspecified error."}
+        api_response = ApiResponse(status=Status.error, message="Unspecified error.")
+        response = Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=api_response)
 
     return response
 
