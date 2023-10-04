@@ -166,7 +166,7 @@ async def stop_instance(
         await asyncio.gather(*futures)
 
         api_response = ApiResponse(status=Status.ok, message=f"{len(instances)} instances stopped.")
-        response = Response(status_code=status.HTTP_200_OK)
+        response = Response(status_code=status.HTTP_200_OK, content=api_response.model_dump_json())
     except Exception:
         db_session.rollback()
         api_response = ApiResponse(status=Status.error, message="Unspecified error.")
