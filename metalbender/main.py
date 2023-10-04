@@ -16,7 +16,8 @@ from metalbender.data_access.heartbeat import (calculate_deadline_time,
                                                create_heartbeat,
                                                get_valid_heartbeats,
                                                remove_heartbeats)
-from metalbender.gce_tools import start_gce_instance
+from metalbender.gce_tools import (get_running_gce_instances,
+                                   start_gce_instance, stop_gce_instance)
 
 app = FastAPI()
 
@@ -108,22 +109,9 @@ async def stop_instance(db_session: SessionType = Depends(get_session)):
 
         project = config.get_gcp_project_id()
         comp_client = compute.InstancesClient()
-        agg_list = await run_in_threadpool(comp_client.aggregated_list, project=project)
-        instance_lists = [
-            x[1].instances
-            for x in agg_list
-            if x[1].warning.code != 'NO_RESULTS_ON_PAGE'
-        ]
-        instances = [x for y in instance_lists for x in y if x.status == 'RUNNING']
 
-        # Check if the instance has a heartbeat.
-        current_time_utc = dt.datetime.utcnow()
-
-        heartbeats = await run_in_threadpool(
-            get_valid_heartbeats,
-            db_session=db_session,
-            current_time_utc=current_time_utc,
-        )
+        instances = await run_in_threadpool(get_running_gce_instances, comp_client=comp_client, project=project)
+        heartbeats = await run_in_threadpool(get_valid_heartbeats, db_session=db_session, current_time_utc=dt.datetime.utcnow())
 
         # Remove instances that have a valid heartbeat.
         instances = [
@@ -136,12 +124,13 @@ async def stop_instance(db_session: SessionType = Depends(get_session)):
             )
         ]
 
+        # Stop all running instances without a valid heartbeat.
         futures = [
             run_in_threadpool(
-                comp_client.stop,
+                stop_gce_instance,
                 project=project,
+                instance=instance,
                 zone=instance.zone.split('/')[-1],
-                instance=instance.name,
             )
             for instance in instances
         ]
