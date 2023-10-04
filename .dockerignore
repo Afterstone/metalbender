@@ -1,7 +1,10 @@
 ### Manually added ###
 
 /certs/
-/.vscode/settings.json
+/.vscode/
+/.github/
+/alembic*
+/sql/
 
 
 ### Auto-generated ###
