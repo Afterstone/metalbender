@@ -14,7 +14,6 @@ RUN python -m poetry install --no-interaction
 
 COPY . .
 
-ENV GOOGLE_APPLICATION_CREDENTIALS=/gcp_credentials/credentials.json
 ENV FASTAPI_HOST=0.0.0.0
 ENV FASTAPI_PORT=8000
 
