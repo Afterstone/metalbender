@@ -79,6 +79,8 @@ def _get_secret_manager_file(
         if not file_path.exists():
             raise FileNotFoundError(
                 f"Failed to write secret manager file to {file_path}")
+
+        file_path.chmod(0o600)
     except FileNotFoundError as fnfe:
         raise fnfe
 
