@@ -54,8 +54,13 @@ def get_user_credentials(credentials: HTTPBasicCredentials = Depends(security)) 
 
 
 @app.get('/health')
-async def health():
-    return {'status': 'ok'}
+async def health(
+    _: str = Depends(get_user_credentials),
+):
+    return Response(
+        status_code=status.HTTP_200_OK,
+        content=ApiResponse(status=Status.ok, message="Healthy").model_dump_json(),
+    )
 
 
 class KeepAliveRequest(BaseModel):
