@@ -1,10 +1,9 @@
-FROM python:3.11-slim-buster
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
-RUN mkdir -p /gcp_credentials
 
 RUN adduser --disabled-login nopriv \
-    && chown -R nopriv:nopriv /app/ /gcp_credentials/ 
+    && chown -R nopriv:nopriv /app/
 USER nopriv
 
 RUN pip install --no-cache-dir poetry==1.6.1
