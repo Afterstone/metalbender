@@ -22,3 +22,8 @@ def create_heartbeat(
     db_session.flush()
 
     return heartbeat
+
+
+def remove_heartbeats(db_session: SessionType):
+    db_session.query(Heartbeat).filter(Heartbeat.deadline < dt.datetime.utcnow()).delete()
+    db_session.commit()

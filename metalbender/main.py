@@ -12,7 +12,8 @@ import metalbender.config as config
 from metalbender.data_access import SessionType, get_session, models
 from metalbender.data_access.gce import find_or_create_gce_instance
 from metalbender.data_access.heartbeat import (calculate_deadline_time,
-                                               create_heartbeat)
+                                               create_heartbeat,
+                                               remove_heartbeats)
 from metalbender.gce_tools import start_gce_instance
 
 app = FastAPI()
@@ -133,13 +134,15 @@ async def stop_instance(db_session: SessionType = Depends(get_session)):
 
 @app.post('/clean/heartbeats')
 async def clean_heartbeats(db_session: SessionType = Depends(get_session)):
-    async def remove_heartbeats():
-        db_session.query(models.Heartbeat).filter(models.Heartbeat.deadline < dt.datetime.utcnow()).delete()
-        db_session.commit()
+    try:
+        await run_in_threadpool(remove_heartbeats, db_session=db_session)
+        response = Response(status_code=status.HTTP_200_OK)
+    except Exception:
+        db_session.rollback()
+        message = {'status': 'error', 'message': "Unspecified error."}
+        response = Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=message)
 
-    await run_in_threadpool(remove_heartbeats)
-
-    return {'status': 'ok'}
+    return response
 
 if __name__ == '__main__':
     import uvicorn
