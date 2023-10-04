@@ -79,6 +79,8 @@ def _get_secret_manager_file(
         if not file_path.exists():
             raise FileNotFoundError(
                 f"Failed to write secret manager file to {file_path}")
+
+        file_path.chmod(0o600)
     except FileNotFoundError as fnfe:
         raise fnfe
 
@@ -99,6 +101,14 @@ def get_fastapi_host() -> str:
 
 def get_fastapi_port() -> int:
     return int(_get_envvar_str("FASTAPI_PORT"))
+
+
+def get_fastapi_username() -> str:
+    return _get_envvar_str("FASTAPI_USERNAME")
+
+
+def get_fastapi_password() -> str:
+    return _get_envvar_str("FASTAPI_PASSWORD")
 
 
 def get_sql_client_key_path() -> Path:
